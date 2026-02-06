@@ -4,80 +4,85 @@ on: [push, workflow_dispatch]
 
 jobs:
   build:
-
     runs-on: windows-latest
 
     steps:
     - name: Checkout
       uses: actions/checkout@v4
       
-    - name: Download
+    - name: Download ngrok
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
       
-    - name: Extract
-      run: Expand-Archive ngrok.zip
+    - name: Extract ngrok
+      run: Expand-Archive ngrok.zip -DestinationPath .
       
-    - name: Auth
-      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+    - name: Auth ngrok
+      run: .\ngrok.exe authtoken $env:NGROK_TOKEN
       env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        NGROK_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         
-    - name: Enable TS
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+    - name: Enable RDP
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0 -Force
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1 -Force
       
-    - name: Enable RDP Firewall
-      run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-      
-    - name: Set RDP Authentication
-      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-      
-    - name: Create User Password
+    - name: Create User
       run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
       
-    - name: Start ngrok Tunnel
-      run: Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
+    - name: Start ngrok
+      run: Start-Process -NoNewWindow -FilePath ".\ngrok.exe" -ArgumentList "tcp 3389"
       
-    - name: Get VDS IP and Save
+    - name: Get VDS Info from API
       run: |
-        $maxAttempts = 30
-        $attempt = 0
+        $maxRetries = 30
+        $retryCount = 0
         $vdsUrl = $null
         
-        # ngrok API'den VDS URL'sini al
-        while ($attempt -lt $maxAttempts) {
+        # ngrok API endpoint
+        $apiUrl = "http://localhost:4040/api/tunnels"
+        
+        while ($retryCount -lt $maxRetries) {
           try {
-            $response = Invoke-WebRequest -Uri "http://localhost:4040/api/tunnels" -UseBasicParsing -ErrorAction Stop
-            $tunnels = $response.Content | ConvertFrom-Json
+            $response = Invoke-WebRequest -Uri $apiUrl -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            $data = $response.Content | ConvertFrom-Json
             
-            if ($tunnels.tunnels.Count -gt 0) {
-              $vdsUrl = $tunnels.tunnels[0].public_url
-              Write-Host "✓ ngrok tunnel hazır! URL: $vdsUrl"
-              break
+            # Tunnel bulundu mu kontrol et
+            if ($data.tunnels -and $data.tunnels.Count -gt 0) {
+              $tunnel = $data.tunnels | Where-Object { $_.proto -eq "tcp" } | Select-Object -First 1
+              
+              if ($tunnel) {
+                $vdsUrl = $tunnel.public_url
+                Write-Host "✓ VDS Tunnel bulundu: $vdsUrl"
+                break
+              }
             }
           } catch {
-            $attempt++
-            Write-Host "⏳ Tunnel başlıyor... ($attempt/$maxAttempts)"
+            $retryCount++
+            Write-Host "⏳ Tunnel başlıyor... Deneme: $retryCount/$maxRetries"
             Start-Sleep -Seconds 2
           }
         }
         
+        # Eğer URL bulunamadıysa hata ver
         if (-not $vdsUrl) {
-          Write-Host "✗ Tunnel başlatılamadı!"
+          Write-Host "✗ HATA: VDS URL 60 saniye içinde alınamadı!"
           exit 1
         }
         
-        # URL'den host ve port'u ayıkla (tcp://host:port formatında)
-        $urlParts = $vdsUrl -replace "tcp://", "" -split ":"
-        $host = $urlParts[0]
-        $port = if ($urlParts.Count -gt 1) { $urlParts[1] } else { "3389" }
+        # URL'den bilgileri ayıkla
+        $urlPattern = $vdsUrl -replace "tcp://", ""
+        $hostPort = $urlPattern -split ":"
+        $host = $hostPort[0]
+        $port = if ($hostPort.Count -gt 1) { $hostPort[1] } else { "3389" }
         
         # VDS bilgilerini kaydet
-        $content = @"
+        $vdsInfo = @"
 ╔════════════════════════════════════════╗
 ║       VDS BAGLANTI BILGILERI           ║
 ╚════════════════════════════════════════╝
 
-📅 Oluşturma Zamanı: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+📅 Oluşturma Zamanı: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 
 🌐 BAGLANTI ADRESLERI:
    • Genel URL: $vdsUrl
@@ -85,41 +90,53 @@ jobs:
    • Port: $port
 
 🖥️  SUNUCU BILGILERI:
-   • Türü: Windows RDP
    • İşletim Sistemi: Windows Server
+   • RDP Servisi: Aktif
+   • Güvenlik: Etkin
 
 👤 GİRİŞ BİLGİLERİ:
    • Kullanıcı Adı: runneradmin
    • Şifre: P@ssw0rd!
 
 📋 BAGLANTI ADIMLARI:
-   1. RDP istemcisini aç
-   2. Sunucu Adı: $host:$port
+   1. RDP istemcisini aç (mstsc.exe)
+   2. Sunucu Adına yaz: $host:$port
    3. Kullanıcı Adı: runneradmin
-   4. Şifre: P@ssw0rd!
+   4. Şifre: P@ssw0rd! gir
    5. Bağlan'a tıkla
 
-⚠️  NOT: Bu session sınırlı süre için aktiftir.
+⚠️  ÖNEMLİ NOTLAR:
+   • Bu session sınırlı süre için aktiftir
+   • ngrok aracılığı ile bağlantı sağlanır
+   • Tüm veri şifreli iletilir
 "@
         
-        $content | Out-File -FilePath "vds-info.txt" -Encoding UTF8
+        # TXT formatında kaydet
+        $vdsInfo | Out-File -FilePath "vds-info.txt" -Encoding UTF8 -Force
         
-        # JSON olarak da kaydet
-        @{
+        # JSON formatında kaydet
+        $jsonData = @{
           url = $vdsUrl
           host = $host
           port = $port
           username = "runneradmin"
           password = "P@ssw0rd!"
-          timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        } | ConvertTo-Json | Out-File -FilePath "vds-info.json" -Encoding UTF8
+          timestamp = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+          status = "active"
+        } | ConvertTo-Json
         
-        Write-Host "✓ VDS bilgileri kaydedildi!"
+        $jsonData | Out-File -FilePath "vds-info.json" -Encoding UTF8 -Force
+        
+        # Ekrana yazdır
+        Write-Host ""
+        Write-Host $vdsInfo
+        Write-Host ""
+        Write-Host "✓ VDS bilgileri başarıyla kaydedildi!"
       
     - name: Display VDS Info
       run: Get-Content vds-info.txt
       
-    - name: Upload Connection Info
+    - name: Upload Info Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: vds-connection-info
@@ -130,8 +147,8 @@ jobs:
       
     - name: Keep Session Alive
       run: |
+        Write-Host ""
         Write-Host "🟢 VDS Session başarıyla oluşturuldu!"
-        Write-Host "Artifact'tan bağlantı bilgilerini indirebilirsiniz."
-        while($true) { 
-          Start-Sleep -Seconds 60 
-        }
+        Write-Host "📥 Bağlantı bilgilerini 'Artifacts' bölümünden indirebilirsiniz."
+        Write-Host ""
+        Start-Sleep -Seconds 3600
