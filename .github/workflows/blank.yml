@@ -50,19 +50,11 @@ jobs:
           }
         }
         if ($vdsUrl) {
-          $info = @"
-        ╔════════════════════════════════════════╗
-        ║       VDS BAGLANTI BILGILERI           ║
-        ╚════════════════════════════════════════╝
-        
-        VDS URL: $vdsUrl
-        Kullanici: runneradmin
-        Sifre: P@ssw0rd!
-        "@
+          $info = "╔════════════════════════════════════════╗`n║       VDS BAGLANTI BILGILERI           ║`n╚════════════════════════════════════════╝`n`nVDS URL: $vdsUrl`nKullanici: runneradmin`nSifre: P@ssw0rd!"
           $info | Out-File -FilePath "vds-info.txt" -Encoding UTF8
           Get-Content vds-info.txt
         } else {
-          Write-Host "ERROR: VDS URL alınamadı"
+          Write-Host "ERROR: VDS URL alinamadi"
           exit 1
         }
       
