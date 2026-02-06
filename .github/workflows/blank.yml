@@ -9,7 +9,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       
     - name: Download
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
@@ -45,7 +45,7 @@ jobs:
       run: Get-Content vds-info.txt
       
     - name: Upload Connection Info
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: vds-connection-info
         path: |
