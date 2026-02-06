@@ -8,18 +8,54 @@ jobs:
     runs-on: windows-latest
 
     steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      
     - name: Download
       run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+      
     - name: Extract
       run: Expand-Archive ngrok.zip
+      
     - name: Auth
       run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        
     - name: Enable TS
       run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
-    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
-    - name: Create Tunnel
-      run: .\ngrok\ngrok.exe tcp 3389
+      
+    - name: Enable RDP Firewall
+      run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+      
+    - name: Set RDP Authentication
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+      
+    - name: Create User Password
+      run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+      
+    - name: Start ngrok Tunnel
+      run: Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
+      
+    - name: Create VDS IP File
+      run: |
+        & ".\scripts\create-vds-ip.ps1" -OutputFile "vds-info.txt" -WaitSeconds 5 -MaxRetries 10
+      
+    - name: Display VDS Info
+      run: Get-Content vds-info.txt
+      
+    - name: Upload Connection Info
+      uses: actions/upload-artifact@v3
+      with:
+        name: vds-connection-info
+        path: |
+          vds-info.txt
+          vds-info.json
+      if: always()
+      
+    - name: Keep Session Alive
+      run: |
+        Write-Host "🟢 VDS Session aktif. Bağlantılar artifact'tan indirebilirsiniz."
+        while($true) { 
+          Start-Sleep -Seconds 60 
+        }
