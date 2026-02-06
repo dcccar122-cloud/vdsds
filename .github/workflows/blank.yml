@@ -37,9 +37,84 @@ jobs:
     - name: Start ngrok Tunnel
       run: Start-Process -NoNewWindow -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 3389"
       
-    - name: Create VDS IP File
+    - name: Get VDS IP and Save
       run: |
-        & ".\scripts\create-vds-ip.ps1" -OutputFile "vds-info.txt" -WaitSeconds 5 -MaxRetries 10
+        $maxAttempts = 30
+        $attempt = 0
+        $vdsUrl = $null
+        
+        # ngrok API'den VDS URL'sini al
+        while ($attempt -lt $maxAttempts) {
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:4040/api/tunnels" -UseBasicParsing -ErrorAction Stop
+            $tunnels = $response.Content | ConvertFrom-Json
+            
+            if ($tunnels.tunnels.Count -gt 0) {
+              $vdsUrl = $tunnels.tunnels[0].public_url
+              Write-Host "✓ ngrok tunnel hazır! URL: $vdsUrl"
+              break
+            }
+          } catch {
+            $attempt++
+            Write-Host "⏳ Tunnel başlıyor... ($attempt/$maxAttempts)"
+            Start-Sleep -Seconds 2
+          }
+        }
+        
+        if (-not $vdsUrl) {
+          Write-Host "✗ Tunnel başlatılamadı!"
+          exit 1
+        }
+        
+        # URL'den host ve port'u ayıkla (tcp://host:port formatında)
+        $urlParts = $vdsUrl -replace "tcp://", "" -split ":"
+        $host = $urlParts[0]
+        $port = if ($urlParts.Count -gt 1) { $urlParts[1] } else { "3389" }
+        
+        # VDS bilgilerini kaydet
+        $content = @"
+╔════════════════════════════════════════╗
+║       VDS BAGLANTI BILGILERI           ║
+╚════════════════════════════════════════╝
+
+📅 Oluşturma Zamanı: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+
+🌐 BAGLANTI ADRESLERI:
+   • Genel URL: $vdsUrl
+   • Host: $host
+   • Port: $port
+
+🖥️  SUNUCU BILGILERI:
+   • Türü: Windows RDP
+   • İşletim Sistemi: Windows Server
+
+👤 GİRİŞ BİLGİLERİ:
+   • Kullanıcı Adı: runneradmin
+   • Şifre: P@ssw0rd!
+
+📋 BAGLANTI ADIMLARI:
+   1. RDP istemcisini aç
+   2. Sunucu Adı: $host:$port
+   3. Kullanıcı Adı: runneradmin
+   4. Şifre: P@ssw0rd!
+   5. Bağlan'a tıkla
+
+⚠️  NOT: Bu session sınırlı süre için aktiftir.
+"@
+        
+        $content | Out-File -FilePath "vds-info.txt" -Encoding UTF8
+        
+        # JSON olarak da kaydet
+        @{
+          url = $vdsUrl
+          host = $host
+          port = $port
+          username = "runneradmin"
+          password = "P@ssw0rd!"
+          timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        } | ConvertTo-Json | Out-File -FilePath "vds-info.json" -Encoding UTF8
+        
+        Write-Host "✓ VDS bilgileri kaydedildi!"
       
     - name: Display VDS Info
       run: Get-Content vds-info.txt
@@ -55,7 +130,8 @@ jobs:
       
     - name: Keep Session Alive
       run: |
-        Write-Host "🟢 VDS Session aktif. Bağlantılar artifact'tan indirebilirsiniz."
+        Write-Host "🟢 VDS Session başarıyla oluşturuldu!"
+        Write-Host "Artifact'tan bağlantı bilgilerini indirebilirsiniz."
         while($true) { 
           Start-Sleep -Seconds 60 
         }
